@@ -15,7 +15,7 @@
  * $Id: jiq.c,v 1.7 2004/09/26 07:02:43 gregkh Exp $
  */
  
-#include <linux/config.h>
+/* #include <linux/config.h> */
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -53,26 +53,31 @@ module_param(delay, long, 0);
 static DECLARE_WAIT_QUEUE_HEAD (jiq_wait);
 
 
-static struct work_struct jiq_work;
-
-
-
 /*
  * Keep track of info we need between task queue runs.
  */
-static struct clientdata {
+struct clientdata {
 	int len;
 	char *buf;
 	unsigned long jiffies;
 	long delay;
-} jiq_data;
+};
+
+/* Shared data among callback functions. */
+struct jiq_shared_data {
+        struct delayed_work work;
+        struct clientdata data;
+};
+
+static struct jiq_shared_data jiq_sd;
+
 
 #define SCHEDULER_QUEUE ((task_queue *) 1)
 
 
 
 static void jiq_print_tasklet(unsigned long);
-static DECLARE_TASKLET(jiq_tasklet, jiq_print_tasklet, (unsigned long)&jiq_data);
+static DECLARE_TASKLET(jiq_tasklet, jiq_print_tasklet, (unsigned long)&jiq_sd.data);
 
 
 /*
@@ -111,17 +116,21 @@ static int jiq_print(void *ptr)
 /*
  * Call jiq_print from a work queue
  */
-static void jiq_print_wq(void *ptr)
+static void jiq_print_wq(struct work_struct *work)
 {
-	struct clientdata *data = (struct clientdata *) ptr;
+        struct delayed_work *dwork =
+                container_of(work, struct delayed_work, work);
+        struct jiq_shared_data *jiq_sd = 
+                container_of(dwork, struct jiq_shared_data, work);
+        struct clientdata *data = &jiq_sd->data;
     
-	if (! jiq_print (ptr))
+	if (! jiq_print (data))
 		return;
     
 	if (data->delay)
-		schedule_delayed_work(&jiq_work, data->delay);
+		schedule_delayed_work(dwork, data->delay);
 	else
-		schedule_work(&jiq_work);
+		schedule_work(work);
 }
 
 
@@ -130,19 +139,20 @@ static int jiq_read_wq(char *buf, char **start, off_t offset,
                    int len, int *eof, void *data)
 {
 	DEFINE_WAIT(wait);
-	
-	jiq_data.len = 0;                /* nothing printed, yet */
-	jiq_data.buf = buf;              /* print in this place */
-	jiq_data.jiffies = jiffies;      /* initial time */
-	jiq_data.delay = 0;
+
+        struct clientdata *jiq_data = &jiq_sd.data;
+	jiq_data->len = 0;                /* nothing printed, yet */
+	jiq_data->buf = buf;              /* print in this place */
+	jiq_data->jiffies = jiffies;      /* initial time */
+	jiq_data->delay = 0;
     
 	prepare_to_wait(&jiq_wait, &wait, TASK_INTERRUPTIBLE);
-	schedule_work(&jiq_work);
+	schedule_work(&jiq_sd.work.work);
 	schedule();
 	finish_wait(&jiq_wait, &wait);
 
 	*eof = 1;
-	return jiq_data.len;
+	return jiq_data->len;
 }
 
 
@@ -151,18 +161,19 @@ static int jiq_read_wq_delayed(char *buf, char **start, off_t offset,
 {
 	DEFINE_WAIT(wait);
 	
-	jiq_data.len = 0;                /* nothing printed, yet */
-	jiq_data.buf = buf;              /* print in this place */
-	jiq_data.jiffies = jiffies;      /* initial time */
-	jiq_data.delay = delay;
+        struct clientdata *jiq_data = &jiq_sd.data;
+	jiq_data->len = 0;                /* nothing printed, yet */
+	jiq_data->buf = buf;              /* print in this place */
+	jiq_data->jiffies = jiffies;      /* initial time */
+	jiq_data->delay = delay;
     
 	prepare_to_wait(&jiq_wait, &wait, TASK_INTERRUPTIBLE);
-	schedule_delayed_work(&jiq_work, delay);
+	schedule_delayed_work(&jiq_sd.work, delay);
 	schedule();
 	finish_wait(&jiq_wait, &wait);
 
 	*eof = 1;
-	return jiq_data.len;
+	return jiq_data->len;
 }
 
 
@@ -182,15 +193,16 @@ static void jiq_print_tasklet(unsigned long ptr)
 static int jiq_read_tasklet(char *buf, char **start, off_t offset, int len,
                 int *eof, void *data)
 {
-	jiq_data.len = 0;                /* nothing printed, yet */
-	jiq_data.buf = buf;              /* print in this place */
-	jiq_data.jiffies = jiffies;      /* initial time */
+        struct clientdata *jiq_data = &jiq_sd.data;
+	jiq_data->len = 0;                /* nothing printed, yet */
+	jiq_data->buf = buf;              /* print in this place */
+	jiq_data->jiffies = jiffies;      /* initial time */
 
 	tasklet_schedule(&jiq_tasklet);
 	interruptible_sleep_on(&jiq_wait);    /* sleep till completion */
 
 	*eof = 1;
-	return jiq_data.len;
+	return jiq_data->len;
 }
 
 
@@ -213,22 +225,23 @@ static int jiq_read_run_timer(char *buf, char **start, off_t offset,
                    int len, int *eof, void *data)
 {
 
-	jiq_data.len = 0;           /* prepare the argument for jiq_print() */
-	jiq_data.buf = buf;
-	jiq_data.jiffies = jiffies;
+        struct clientdata *jiq_data = &jiq_sd.data;
+	jiq_data->len = 0;           /* prepare the argument for jiq_print() */
+	jiq_data->buf = buf;
+	jiq_data->jiffies = jiffies;
 
 	init_timer(&jiq_timer);              /* init the timer structure */
 	jiq_timer.function = jiq_timedout;
 	jiq_timer.data = (unsigned long)&jiq_data;
 	jiq_timer.expires = jiffies + HZ; /* one second */
 
-	jiq_print(&jiq_data);   /* print and go to sleep */
+	jiq_print(jiq_data);   /* print and go to sleep */
 	add_timer(&jiq_timer);
 	interruptible_sleep_on(&jiq_wait);  /* RACE */
 	del_timer_sync(&jiq_timer);  /* in case a signal woke us up */
     
 	*eof = 1;
-	return jiq_data.len;
+	return jiq_data->len;
 }
 
 
@@ -241,7 +254,7 @@ static int jiq_init(void)
 {
 
 	/* this line is in jiq_init() */
-	INIT_WORK(&jiq_work, jiq_print_wq, &jiq_data);
+        INIT_DELAYED_WORK(&jiq_sd.work, jiq_print_wq);
 
 	create_proc_read_entry("jiqwq", 0, NULL, jiq_read_wq, NULL);
 	create_proc_read_entry("jiqwqdelay", 0, NULL, jiq_read_wq_delayed, NULL);
