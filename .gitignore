@@ -7,3 +7,6 @@ Module.symvers
 modules.order
 *.ko
 *.mod.c
+GPATH
+GRTAGS
+GTAGS
