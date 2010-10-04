@@ -29,18 +29,13 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-
-#include <asm/io.h> /* linux-specific */
-
-#ifdef __GLIBC__
-#  include <sys/perm.h>
-#endif
+#include <sys/io.h>
 
 #define PORT_FILE "/dev/port"
 
 char *prgname;
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__x86_64)
 static int write_one(unsigned int port, unsigned int val, int size)
 {
     static int iopldone = 0;
@@ -65,7 +60,7 @@ static int write_one(unsigned int port, unsigned int val, int size)
 	outb(val&0xff, port);
     return 0;
 }
-#else /* not i386 */
+#else /* not i386 or x86_64 */
 
 static int write_one(unsigned int port, unsigned int val, int size)
 {
@@ -92,7 +87,7 @@ static int write_one(unsigned int port, unsigned int val, int size)
     return 0;
 }
 
-#endif /* i386 */
+#endif /* i386 or x86_64 */
 
 int main(int argc, char **argv)
 {

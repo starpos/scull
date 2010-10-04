@@ -29,18 +29,14 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-
-#include <asm/io.h> /* linux-specific */
-
-#ifdef __GLIBC__
-#  include <sys/perm.h>
-#endif
+#include <sys/io.h>
 
 #define PORT_FILE "/dev/port"
 
 char *prgname;
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__x86_64__) 
+
 static int read_and_print_one(unsigned int port,int size)
 {
     static int iopldone = 0;
@@ -65,7 +61,7 @@ static int read_and_print_one(unsigned int port,int size)
 	printf("%04x: %02x\n", port, inb(port));
     return 0;
 }
-#else /* not i386 */
+#else /* not i386 or x86_64 */
 
 static int read_and_print_one(unsigned int port,int size)
 {
@@ -93,7 +89,7 @@ static int read_and_print_one(unsigned int port,int size)
     return 0;
 }
 
-#endif /* i386 */
+#endif /* i386 or x86_64 */
 
 
 int main(int argc, char **argv)
