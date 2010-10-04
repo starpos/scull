@@ -15,11 +15,11 @@
  * $Id: _mmap.c.in,v 1.13 2004/10/18 18:07:36 corbet Exp $
  */
 
-#include <linux/config.h>
 #include <linux/module.h>
 
 #include <linux/mm.h>		/* everything */
 #include <linux/errno.h>	/* error codes */
+#include <linux/fs.h>
 #include <asm/pgtable.h>
 
 #include "scullv.h"		/* local definitions */
@@ -44,29 +44,17 @@ void scullv_vma_close(struct vm_area_struct *vma)
 	dev->vmas--;
 }
 
-/*
- * The nopage method: the core of the file. It retrieves the
- * page required from the scullv device and returns it to the
- * user. The count for the page must be incremented, because
- * it is automatically decremented at page unmap.
- *
- * For this reason, "order" must be zero. Otherwise, only the first
- * page has its count incremented, and the allocating module must
- * release it as a whole block. Therefore, it isn't possible to map
- * pages from a multipage block: when they are unmapped, their count
- * is individually decreased, and would drop to 0.
- */
-
-struct page *scullv_vma_nopage(struct vm_area_struct *vma,
-                                unsigned long address, int *type)
+static int scullv_vma_fault(struct vm_area_struct *vma,
+                            struct vm_fault *vmf)
 {
 	unsigned long offset;
 	struct scullv_dev *ptr, *dev = vma->vm_private_data;
-	struct page *page = NOPAGE_SIGBUS;
+	struct page *page;
+        int ret = VM_FAULT_SIGBUS;
 	void *pageptr = NULL; /* default to "missing" */
 
 	down(&dev->sem);
-	offset = (address - vma->vm_start) + (vma->vm_pgoff << PAGE_SHIFT);
+	offset = vmf->pgoff << PAGE_SHIFT;
 	if (offset >= dev->size) goto out; /* out of range */
 
 	/*
@@ -91,27 +79,29 @@ struct page *scullv_vma_nopage(struct vm_area_struct *vma,
 
 	/* got it, now increment the count */
 	get_page(page);
-	if (type)
-		*type = VM_FAULT_MINOR;
+        vmf->page = page;
+        ret = 0;
   out:
 	up(&dev->sem);
-	return page;
+	return ret;
 }
-
-
 
 struct vm_operations_struct scullv_vm_ops = {
 	.open =     scullv_vma_open,
 	.close =    scullv_vma_close,
-	.nopage =   scullv_vma_nopage,
+        .fault =    scullv_vma_fault,
 };
 
 
 int scullv_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 
-	/* don't do anything here: "nopage" will set up page table entries */
-	vma->vm_ops = &scullv_vm_ops;
+        if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+                            vma->vm_end - vma->vm_start,
+                            vma->vm_page_prot))
+                return -EAGAIN;
+        
+        vma->vm_ops = &scullv_vm_ops;
 	vma->vm_flags |= VM_RESERVED;
 	vma->vm_private_data = filp->private_data;
 	scullv_vma_open(vma);
