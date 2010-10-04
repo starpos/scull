@@ -15,7 +15,6 @@
  * $Id: _main.c.in,v 1.21 2004/10/14 20:11:39 corbet Exp $
  */
 
-#include <linux/config.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -49,10 +48,7 @@ int scullc_trim(struct scullc_dev *dev);
 void scullc_cleanup(void);
 
 /* declare one cache pointer: use it for all devices */
-kmem_cache_t *scullc_cache;
-
-
-
+struct kmem_cache *scullc_cache;
 
 
 #ifdef SCULLC_USE_PROC /* don't waste space if unused */
@@ -401,31 +397,64 @@ loff_t scullc_llseek (struct file *filp, loff_t off, int whence)
 struct async_work {
 	struct kiocb *iocb;
 	int result;
-	struct work_struct work;
+	struct delayed_work work;
 };
 
 /*
  * "Complete" an asynchronous operation.
  */
-static void scullc_do_deferred_op(void *p)
+static void scullc_do_deferred_op(struct work_struct *work)
 {
-	struct async_work *stuff = (struct async_work *) p;
+        struct delayed_work *dwork = container_of(work, struct delayed_work, work);
+	struct async_work *stuff = container_of(dwork, struct async_work, work);
 	aio_complete(stuff->iocb, stuff->result, 0);
 	kfree(stuff);
 }
 
+/*
+ * Convert buffer interface
+ * from (char __user *buf, size_t count)
+ * to   (struct iovec *iov, unsigned long nr_seg)
+ */
+static int scullc_io_primitive(int write, struct kiocb *iocb,
+                               const struct iovec *iov,
+                               unsigned long nr_segs, loff_t pos)
+{
+        int result, tmp_result, i;
+        loff_t tmp_pos;
 
-static int scullc_defer_op(int write, struct kiocb *iocb, char __user *buf,
-		size_t count, loff_t pos)
+        result = 0;
+        tmp_result = 0;
+        for (i = 0; i < nr_segs; i ++) {
+                tmp_pos = pos + result;
+                if (write) {
+                        tmp_result = scullc_write
+                                (iocb->ki_filp, iov[i].iov_base,
+                                 iov[i].iov_len, &tmp_pos);
+                } else {
+                        tmp_result = scullc_read
+                                (iocb->ki_filp, iov[i].iov_base,
+                                 iov[i].iov_len, &tmp_pos);
+                }
+                if (tmp_result < 0) {
+                        result = tmp_result;
+                        break;
+                } else {
+                        result += tmp_result;
+                }
+        }
+        return result;
+}
+
+
+static int scullc_defer_op(int write, struct kiocb *iocb, const struct iovec *iov,
+                           unsigned long nr_segs, loff_t pos)
 {
 	struct async_work *stuff;
 	int result;
 
 	/* Copy now while we can access the buffer */
-	if (write)
-		result = scullc_write(iocb->ki_filp, buf, count, &pos);
-	else
-		result = scullc_read(iocb->ki_filp, buf, count, &pos);
+        result = scullc_io_primitive(write, iocb, iov, nr_segs, pos);
 
 	/* If this is a synchronous IOCB, we return our status now. */
 	if (is_sync_kiocb(iocb))
@@ -437,25 +466,24 @@ static int scullc_defer_op(int write, struct kiocb *iocb, char __user *buf,
 		return result; /* No memory, just complete now */
 	stuff->iocb = iocb;
 	stuff->result = result;
-	INIT_WORK(&stuff->work, scullc_do_deferred_op, stuff);
+	INIT_DELAYED_WORK(&stuff->work, scullc_do_deferred_op);
 	schedule_delayed_work(&stuff->work, HZ/100);
 	return -EIOCBQUEUED;
 }
 
 
-static ssize_t scullc_aio_read(struct kiocb *iocb, char __user *buf, size_t count,
-		loff_t pos)
+static ssize_t scullc_aio_read(struct kiocb *iocb, const struct iovec *iov,
+                               unsigned long nr_segs, loff_t pos)
 {
-	return scullc_defer_op(0, iocb, buf, count, pos);
-}
-
-static ssize_t scullc_aio_write(struct kiocb *iocb, const char __user *buf,
-		size_t count, loff_t pos)
-{
-	return scullc_defer_op(1, iocb, (char __user *) buf, count, pos);
+	return scullc_defer_op(0, iocb, iov, nr_segs, pos);
 }
 
 
+static ssize_t scullc_aio_write(struct kiocb *iocb, const struct iovec *iov,
+                                unsigned long nr_segs, loff_t pos)
+{
+	return scullc_defer_op(1, iocb, iov, nr_segs, pos);
+}
  
 
 /*
@@ -558,7 +586,7 @@ int scullc_init(void)
 	}
 
 	scullc_cache = kmem_cache_create("scullc", scullc_quantum,
-			0, SLAB_HWCACHE_ALIGN, NULL, NULL); /* no ctor/dtor */
+			0, SLAB_HWCACHE_ALIGN, NULL); /* no ctor */
 	if (!scullc_cache) {
 		scullc_cleanup();
 		return -ENOMEM;
