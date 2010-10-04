@@ -9,7 +9,7 @@ else
   DEBFLAGS = -O2
 endif
 
-CFLAGS += $(DEBFLAGS) -I$(LDDINC)
+EXTRA_CFLAGS += $(DEBFLAGS) -I$(LDDINC)
 
 TARGET = sculld
 
@@ -25,8 +25,9 @@ KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 PWD       := $(shell pwd)
 
 modules:
-	$(MAKE) -C $(KERNELDIR) M=$(PWD) LDDINC=$(PWD) modules
-
+	$(MAKE) -C $(KERNELDIR) M=$(PWD) LDDINC=$(PWD) \
+	KBUILD_EXTRA_SYMBOLS=$(PWD)/../lddbus/Module.symvers \
+	modules
 endif
 
 

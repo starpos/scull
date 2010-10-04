@@ -15,7 +15,6 @@
  * $Id: _main.c.in,v 1.21 2004/10/14 20:11:39 corbet Exp $
  */
 
-#include <linux/config.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -47,7 +46,6 @@ struct sculld_dev *sculld_devices; /* allocated in sculld_init */
 
 int sculld_trim(struct sculld_dev *dev);
 void sculld_cleanup(void);
-
 
 
 /* Device model stuff */
@@ -409,31 +407,64 @@ loff_t sculld_llseek (struct file *filp, loff_t off, int whence)
 struct async_work {
 	struct kiocb *iocb;
 	int result;
-	struct work_struct work;
+	struct delayed_work work;
 };
 
 /*
  * "Complete" an asynchronous operation.
  */
-static void sculld_do_deferred_op(void *p)
+static void sculld_do_deferred_op(struct work_struct *work)
 {
-	struct async_work *stuff = (struct async_work *) p;
+        struct delayed_work *dwork = container_of(work, struct delayed_work, work);
+	struct async_work *stuff = container_of(dwork, struct async_work, work);
 	aio_complete(stuff->iocb, stuff->result, 0);
 	kfree(stuff);
 }
 
+/*
+ * Convert buffer interface
+ * from (char __user *buf, size_t count)
+ * to   (struct iovec *iov, unsigned long nr_seg)
+ */
+static int sculld_io_primitive(int write, struct kiocb *iocb,
+                               const struct iovec *iov,
+                               unsigned long nr_segs, loff_t pos)
+{
+        int result, tmp_result, i;
+        loff_t tmp_pos;
 
-static int sculld_defer_op(int write, struct kiocb *iocb, char __user *buf,
-		size_t count, loff_t pos)
+        result = 0;
+        tmp_result = 0;
+        for (i = 0; i < nr_segs; i ++) {
+                tmp_pos = pos + result;
+                if (write) {
+                        tmp_result = sculld_write
+                                (iocb->ki_filp, iov[i].iov_base,
+                                 iov[i].iov_len, &tmp_pos);
+                } else {
+                        tmp_result = sculld_read
+                                (iocb->ki_filp, iov[i].iov_base,
+                                 iov[i].iov_len, &tmp_pos);
+                }
+                if (tmp_result < 0) {
+                        result = tmp_result;
+                        break;
+                } else {
+                        result += tmp_result;
+                }
+        }
+        return result;
+}
+
+
+static int sculld_defer_op(int write, struct kiocb *iocb, const struct iovec *iov,
+                           unsigned long nr_segs, loff_t pos)
 {
 	struct async_work *stuff;
 	int result;
 
 	/* Copy now while we can access the buffer */
-	if (write)
-		result = sculld_write(iocb->ki_filp, buf, count, &pos);
-	else
-		result = sculld_read(iocb->ki_filp, buf, count, &pos);
+        result = sculld_io_primitive(write, iocb, iov, nr_segs, pos);
 
 	/* If this is a synchronous IOCB, we return our status now. */
 	if (is_sync_kiocb(iocb))
@@ -445,24 +476,24 @@ static int sculld_defer_op(int write, struct kiocb *iocb, char __user *buf,
 		return result; /* No memory, just complete now */
 	stuff->iocb = iocb;
 	stuff->result = result;
-	INIT_WORK(&stuff->work, sculld_do_deferred_op, stuff);
+	INIT_DELAYED_WORK(&stuff->work, sculld_do_deferred_op);
 	schedule_delayed_work(&stuff->work, HZ/100);
 	return -EIOCBQUEUED;
 }
 
 
-static ssize_t sculld_aio_read(struct kiocb *iocb, char __user *buf, size_t count,
-		loff_t pos)
+static ssize_t sculld_aio_read(struct kiocb *iocb, const struct iovec *iov,
+                               unsigned long nr_segs, loff_t pos)
 {
-	return sculld_defer_op(0, iocb, buf, count, pos);
+	return sculld_defer_op(0, iocb, iov, nr_segs, pos);
 }
 
-static ssize_t sculld_aio_write(struct kiocb *iocb, const char __user *buf,
-		size_t count, loff_t pos)
-{
-	return sculld_defer_op(1, iocb, (char __user *) buf, count, pos);
-}
 
+static ssize_t sculld_aio_write(struct kiocb *iocb, const struct iovec *iov,
+                                unsigned long nr_segs, loff_t pos)
+{
+	return sculld_defer_op(1, iocb, iov, nr_segs, pos);
+}
 
  
 /*
@@ -534,7 +565,7 @@ static void sculld_setup_cdev(struct sculld_dev *dev, int index)
 
 static ssize_t sculld_show_dev(struct device *ddev, char *buf)
 {
-	struct sculld_dev *dev = ddev->driver_data;
+	struct sculld_dev *dev = (struct sculld_dev *)dev_get_drvdata(ddev);
 
 	return print_dev_t(buf, dev->cdev.dev);
 }
@@ -546,7 +577,7 @@ static void sculld_register_dev(struct sculld_dev *dev, int index)
 	sprintf(dev->devname, "sculld%d", index);
 	dev->ldev.name = dev->devname;
 	dev->ldev.driver = &sculld_driver;
-	dev->ldev.dev.driver_data = dev;
+	dev_set_drvdata(&dev->ldev.dev, dev);
 	register_ldd_device(&dev->ldev);
 	device_create_file(&dev->ldev.dev, &dev_attr_dev);
 }

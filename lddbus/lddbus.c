@@ -16,8 +16,8 @@
  */
 /* $Id: lddbus.c,v 1.9 2004/09/26 08:12:27 gregkh Exp $ */
 
-#include <linux/device.h>
 #include <linux/module.h>
+#include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/string.h>
@@ -30,14 +30,11 @@ static char *Version = "$Revision: 1.9 $";
 /*
  * Respond to hotplug events.
  */
-static int ldd_hotplug(struct device *dev, char **envp, int num_envp,
-		char *buffer, int buffer_size)
+static int ldd_hotplug(struct device *dev, struct kobj_uevent_env *env)
 {
-	envp[0] = buffer;
-	if (snprintf(buffer, buffer_size, "LDDBUS_VERSION=%s",
-			    Version) >= buffer_size)
-		return -ENOMEM;
-	envp[1] = NULL;
+        if (add_uevent_var(env, "LDDBUS_VERSION=%s", Version)) {
+                return -ENOMEM;
+        }
 	return 0;
 }
 
@@ -46,7 +43,7 @@ static int ldd_hotplug(struct device *dev, char **envp, int num_envp,
  */
 static int ldd_match(struct device *dev, struct device_driver *driver)
 {
-	return !strncmp(dev->bus_id, driver->name, strlen(driver->name));
+	return !strncmp(dev->init_name, driver->name, strlen(driver->name));
 }
 
 
@@ -59,7 +56,7 @@ static void ldd_bus_release(struct device *dev)
 }
 	
 struct device ldd_bus = {
-	.bus_id   = "ldd0",
+	.init_name   = "ldd0",
 	.release  = ldd_bus_release
 };
 
@@ -70,7 +67,7 @@ struct device ldd_bus = {
 struct bus_type ldd_bus_type = {
 	.name = "ldd",
 	.match = ldd_match,
-	.hotplug  = ldd_hotplug,
+	.uevent = ldd_hotplug,
 };
 
 /*
@@ -102,7 +99,7 @@ int register_ldd_device(struct ldd_device *ldddev)
 	ldddev->dev.bus = &ldd_bus_type;
 	ldddev->dev.parent = &ldd_bus;
 	ldddev->dev.release = ldd_dev_release;
-	strncpy(ldddev->dev.bus_id, ldddev->name, BUS_ID_SIZE);
+	ldddev->dev.init_name = ldddev->name;
 	return device_register(&ldddev->dev);
 }
 EXPORT_SYMBOL(register_ldd_device);

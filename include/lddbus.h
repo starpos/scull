@@ -4,6 +4,9 @@
  * $Id: lddbus.h,v 1.4 2004/08/20 18:49:44 corbet Exp $
  */
 
+#ifndef LDDBUS_H
+#define LDDBUS_H
+
 //extern struct device ldd_bus;
 extern struct bus_type ldd_bus_type;
 
@@ -37,3 +40,5 @@ extern int register_ldd_device(struct ldd_device *);
 extern void unregister_ldd_device(struct ldd_device *);
 extern int register_ldd_driver(struct ldd_driver *);
 extern void unregister_ldd_driver(struct ldd_driver *);
+
+#endif /* LDDBUS_H */
