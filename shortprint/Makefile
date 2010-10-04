@@ -1,7 +1,7 @@
 # Comment/uncomment the following line to disable/enable debugging
 #DEBUG = y
 
-CFLAGS += -O2 -I..
+EXTRA_CFLAGS += -O2 -I..
 
 ifneq ($(KERNELRELEASE),)
 # call from kernel build system
