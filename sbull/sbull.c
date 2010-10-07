@@ -105,9 +105,10 @@ static void sbull_request(struct request_queue *q)
 
 	while ((req = blk_peek_request(q)) != NULL) {
 		struct sbull_dev *dev = req->rq_disk->private_data;
+                blk_start_request(req);
 		if (! blk_fs_request(req)) {
 			printk (KERN_NOTICE "Skip non-fs request\n");
-			__blk_end_request_cur(req, 0);
+			__blk_end_request_all(req, -EIO);
 			continue;
 		}
     //    	printk (KERN_NOTICE "Req dev %d dir %ld sec %ld, nr %d f %lx\n",
@@ -116,7 +117,7 @@ static void sbull_request(struct request_queue *q)
     //    			req->flags);
 		sbull_transfer(dev, blk_rq_pos(req), blk_rq_cur_bytes(req),
                                req->buffer, rq_data_dir(req));
-		__blk_end_request_cur(req, 1);
+		__blk_end_request_all(req, 0);
 	}
 }
 
@@ -190,19 +191,20 @@ static void sbull_full_request(struct request_queue *q)
 	struct request *req;
 	int sectors_xferred;
 	struct sbull_dev *dev = q->queuedata;
+        int error;
 
 	while ((req = blk_peek_request(q)) != NULL) {
+                blk_start_request(req);
 		if (! blk_fs_request(req)) {
 			printk (KERN_NOTICE "Skip non-fs request\n");
-			__blk_end_request_cur(req, 0);
+			__blk_end_request_all(req, -EIO);
 			continue;
 		}
 		sectors_xferred = sbull_xfer_request(dev, req);
-                if (! __blk_end_request(req, 0,
-                                        sectors_xferred * KERNEL_SECTOR_SIZE)) {
-			blk_start_request(req);
-			blk_complete_request(req);
-		}
+                
+                error = (sectors_xferred * KERNEL_SECTOR_SIZE ==
+                         blk_rq_bytes(req)) ? 0 : -EIO;
+                __blk_end_request_all(req, error);
 	}
 }
 
@@ -464,7 +466,7 @@ static void sbull_exit(void)
 		}
 		if (dev->queue) {
 			if (request_mode == RM_NOQUEUE)
-				kobject_put(&dev->queue->kobj);
+                                kobject_put(&dev->queue->kobj);
 			else
 				blk_cleanup_queue(dev->queue);
 		}
