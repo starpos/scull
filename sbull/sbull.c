@@ -106,7 +106,7 @@ static void sbull_request(struct request_queue *q)
 	while ((req = blk_peek_request(q)) != NULL) {
 		struct sbull_dev *dev = req->rq_disk->private_data;
                 blk_start_request(req);
-		if (! blk_fs_request(req)) {
+		if (! req->cmd_type != REQ_TYPE_FS) {
 			printk (KERN_NOTICE "Skip non-fs request\n");
 			__blk_end_request_all(req, -EIO);
 			continue;
@@ -195,7 +195,7 @@ static void sbull_full_request(struct request_queue *q)
 
 	while ((req = blk_peek_request(q)) != NULL) {
                 blk_start_request(req);
-		if (! blk_fs_request(req)) {
+		if (! req->cmd_type != REQ_TYPE_FS) {
 			printk (KERN_NOTICE "Skip non-fs request\n");
 			__blk_end_request_all(req, -EIO);
 			continue;
