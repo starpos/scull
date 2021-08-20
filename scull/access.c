@@ -29,6 +29,7 @@
 #include <linux/sched.h>
 #include <asm/atomic.h>
 #include <linux/list.h>
+#include <linux/version.h>
 
 #include "scull.h"        /* local definitions */
 
@@ -96,7 +97,12 @@ struct file_operations scull_sngl_fops = {
 static struct scull_dev scull_u_device;
 static int scull_u_count;	/* initialized to 0 by default */
 static uid_t scull_u_owner;	/* initialized to 0 by default */
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0) && !defined(SPIN_LOCK_UNLOCKED)
+static spinlock_t scull_u_lock = __SPIN_LOCK_UNLOCKED(scull_u_lock);
+#else
 static spinlock_t scull_u_lock = SPIN_LOCK_UNLOCKED;
+#endif
 
 static int scull_u_open(struct inode *inode, struct file *filp)
 {
@@ -158,7 +164,11 @@ static struct scull_dev scull_w_device;
 static int scull_w_count;	/* initialized to 0 by default */
 static uid_t scull_w_owner;	/* initialized to 0 by default */
 static DECLARE_WAIT_QUEUE_HEAD(scull_w_wait);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0) && !defined(SPIN_LOCK_UNLOCKED)
+static spinlock_t scull_w_lock = __SPIN_LOCK_UNLOCKED(scull_w_lock);
+#else
 static spinlock_t scull_w_lock = SPIN_LOCK_UNLOCKED;
+#endif
 
 static inline int scull_w_available(void)
 {
@@ -238,7 +248,11 @@ struct scull_listitem {
 
 /* The list of devices, and a lock to protect it */
 static LIST_HEAD(scull_c_list);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0) && !defined(SPIN_LOCK_UNLOCKED)
+static spinlock_t scull_c_lock = __SPIN_LOCK_UNLOCKED(scull_c_lock);
+#else
 static spinlock_t scull_c_lock = SPIN_LOCK_UNLOCKED;
+#endif
 
 /* A placeholder scull_dev which really just holds the cdev stuff. */
 static struct scull_dev scull_c_device;   
@@ -262,7 +276,11 @@ static struct scull_dev *scull_c_lookfor_device(dev_t key)
 	memset(lptr, 0, sizeof(struct scull_listitem));
 	lptr->key = key;
 	scull_trim(&(lptr->device)); /* initialize it */
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 36) && !defined(init_MUTEX)
+	sema_init(&(lptr->device.sem), 1);
+#else
 	init_MUTEX(&(lptr->device.sem));
+#endif
 
 	/* place it in the list */
 	list_add(&lptr->list, &scull_c_list);
@@ -348,7 +366,11 @@ static void scull_access_setup (dev_t devno, struct scull_adev_info *devinfo)
 	/* Initialize the device structure */
 	dev->quantum = scull_quantum;
 	dev->qset = scull_qset;
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 36) && !defined(init_MUTEX)
+	sema_init(&dev->sem, 1);
+#else
 	init_MUTEX(&dev->sem);
+#endif
 
 	/* Do the cdev stuff. */
 	cdev_init(&dev->cdev, devinfo->fops);

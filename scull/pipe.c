@@ -28,6 +28,7 @@
 #include <linux/cdev.h>
 #include <linux/sched.h>
 #include <asm/uaccess.h>
+#include <linux/version.h>
 
 #include "scull.h"		/* local definitions */
 
@@ -363,7 +364,11 @@ int scull_p_init(dev_t firstdev)
 	for (i = 0; i < scull_p_nr_devs; i++) {
 		init_waitqueue_head(&(scull_p_devices[i].inq));
 		init_waitqueue_head(&(scull_p_devices[i].outq));
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 36) && !defined(init_MUTEX)
+		sema_init(&scull_p_devices[i].sem, 1);
+#else
 		init_MUTEX(&scull_p_devices[i].sem);
+#endif
 		scull_p_setup_cdev(scull_p_devices + i, i);
 	}
 #ifdef SCULL_DEBUG

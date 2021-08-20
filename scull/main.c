@@ -27,6 +27,7 @@
 #include <linux/fcntl.h>	/* O_ACCMODE */
 #include <linux/seq_file.h>
 #include <linux/cdev.h>
+#include <linux/version.h>
 
 #include <asm/system.h>		/* cli(), *_flags */
 #include <asm/uaccess.h>	/* copy_*_user */
@@ -647,7 +648,11 @@ int scull_init_module(void)
 	for (i = 0; i < scull_nr_devs; i++) {
 		scull_devices[i].quantum = scull_quantum;
 		scull_devices[i].qset = scull_qset;
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 36) && !defined(init_MUTEX)
+		sema_init(&scull_devices[i].sem, 1);
+#else
 		init_MUTEX(&scull_devices[i].sem);
+#endif
 		scull_setup_cdev(&scull_devices[i], i);
 	}
 
